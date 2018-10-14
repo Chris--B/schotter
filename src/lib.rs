@@ -60,19 +60,33 @@ impl <'px> Canvas<'px> {
     /// Construct an in index into the pixels buffer from an `(x, y)` coordinate.
     /// If the coordinate would be out of bounds, or if overflow occurs, returns
     /// `None`.
-    fn index(&self, x: u32, y: u32) -> LolwutResult<usize> {
-        let maybe_err = PixelOutOfBounds {
-            x,
-            y,
-            width: self.width,
-            height: self.height
-        };
-        let index = y.checked_mul(self.height).ok_or(maybe_err)?
-                     .checked_add(x).ok_or(maybe_err)? as usize;
-        if index < self.pixels.len() {
-            Ok(index)
-        } else {
-            Err(maybe_err)
+    pub fn index(&self, x: u32, y: u32) -> LolwutResult<usize> {
+        // All of our error checking is Option-based. However, what we want is
+        // Result-based.
+        // Furthermore, every error generates the same Error: PixelOutOfBounds.
+        // This lambda lets us use `?` on checked arithmetic, while still
+        // keeping the syntax concise.
+        // Even in debug builds, this lambda is inlined.
+        match || -> Option<usize> {
+            let x = x as usize;
+            let y = y as usize;
+            let width = self.width as usize;
+            let height = self.height as usize;
+
+            if x < width && y < height {
+                let index = x.checked_add(y.checked_mul(width)?)?;
+                Some(index)
+            } else {
+                None
+            }
+        }() {
+            Some(index) => Ok(index),
+            None        => Err(PixelOutOfBounds {
+                                x,
+                                y,
+                                width: self.width,
+                                height: self.height
+                           }),
         }
     }
 
