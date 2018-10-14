@@ -10,7 +10,7 @@
 #![allow(dead_code, unused_variables)]
 
 use std::{
-    char,
+    str,
     f32::consts::PI,
 };
 
@@ -96,9 +96,12 @@ impl <'px> Canvas<'px> {
         }
     }
 
-    /// Get the pixel at `(x, y)`.
-    pub fn get_pixel(&self, x: u32, y: u32) -> LolwutResult<u8> {
-        Ok(self.pixels[self.index(x, y)?])
+    /// Get the pixel at `(x, y)`. Out of bounds pixels are read as empty.
+    pub fn get_pixel(&self, x: u32, y: u32) -> u8 {
+        match self.index(x, y) {
+            Ok(index) => self.pixels[index],
+            Err(_)    => 0,
+        }
     }
 
     /// Draw a single pixel at `(x, y)`.
@@ -177,14 +180,20 @@ impl <'px> Canvas<'px> {
     /// Generate a `String` with each pixel represented in a grid.
     pub fn render(&self) -> LolwutResult<String> {
         let mut out = String::with_capacity(self.pixels.len());
-        for y in 0..self.height {
-            for x in 0..self.width {
-                let t = match self.get_pixel(x, y)? {
-                    0 => '.',
-                    1 => '@',
-                    _ => '?',
-                };
-                out.push(t);
+        // Iterate over the range in 2x4 vertical blocks.
+        // TODO: Check edge case when height % 4 != 0, and width % 2 != 0.
+        for y in (0..self.height).step_by(4) {
+            for x in (0..self.width).step_by(2) {
+                let mut byte: u8 = 0;
+                if self.get_pixel(x,   y)   != 0 { byte |= 1 << 0; }
+                if self.get_pixel(x,   y+1) != 0 { byte |= 1 << 1; }
+                if self.get_pixel(x,   y+2) != 0 { byte |= 1 << 2; }
+                if self.get_pixel(x+1, y)   != 0 { byte |= 1 << 3; }
+                if self.get_pixel(x+1, y+1) != 0 { byte |= 1 << 4; }
+                if self.get_pixel(x+1, y+2) != 0 { byte |= 1 << 5; }
+                if self.get_pixel(x,   y+3) != 0 { byte |= 1 << 6; }
+                if self.get_pixel(x+1, y+3) != 0 { byte |= 1 << 7; }
+                out.push(translate_pixels_group(byte));
             }
             out.push('\n');
         }
@@ -203,12 +212,73 @@ impl <'px> Canvas<'px> {
 /// [6] [7]
 /// ```
 pub fn translate_pixels_group(byte: u8) -> char {
+    // See: https://en.wikipedia.org/wiki/Braille_Patterns
+
     // Convert to unicode. This is in the U0800-UFFFF range,
     // so we need to emit it like this in three bytes:
     //      1110_xxxx 10xx_xxxx 10xx_xxxx
     let code = 0x2800 + byte as u32;
-    let o0: u32 = 0xe0 | ((code >> 12) as u8) as u32;
-    let o1: u32 = 0x80 | ((code >>  6) as u8 & 0x3f) as u32;
-    let o2: u32 = 0x80 | ( code        as u8 & 0x3f) as u32;
-    char::from_u32(o0 << 16 | o1 << 8 | o2).unwrap_or('☂')
+    let out: [u8; 3] = [
+        0xe0 | ((code >> 12) as u8),
+        0x80 | ((code >>  6) as u8 & 0x3f),
+        0x80 | ( code        as u8 & 0x3f),
+    ];
+    unsafe {
+        str::from_utf8_unchecked(&out).chars().nth(0).unwrap_or('☂')
+    }
+}
+
+#[cfg(test)]
+mod t {
+    use super::*;
+
+    #[test]
+    fn check_translate_pixels_group() {
+        let braille = [
+            '\u{2800}', // Super special secret blank "character"
+                 '⠁', '⠂', '⠃', '⠄', '⠅', '⠆', '⠇',
+            '⠈', '⠉', '⠊', '⠋', '⠌', '⠍', '⠎', '⠏',
+            '⠐', '⠑', '⠒', '⠓', '⠔', '⠕', '⠖', '⠗',
+            '⠘', '⠙', '⠚', '⠛', '⠜', '⠝', '⠞', '⠟',
+            '⠠', '⠡', '⠢', '⠣', '⠤', '⠥', '⠦', '⠧',
+            '⠨', '⠩', '⠪', '⠫', '⠬', '⠭', '⠮', '⠯',
+            '⠰', '⠱', '⠲', '⠳', '⠴', '⠵', '⠶', '⠷',
+            '⠸', '⠹', '⠺', '⠻', '⠼', '⠽', '⠾', '⠿',
+            '⡀', '⡁', '⡂', '⡃', '⡄', '⡅', '⡆', '⡇',
+            '⡈', '⡉', '⡊', '⡋', '⡌', '⡍', '⡎', '⡏',
+            '⡐', '⡑', '⡒', '⡓', '⡔', '⡕', '⡖', '⡗',
+            '⡘', '⡙', '⡚', '⡛', '⡜', '⡝', '⡞', '⡟',
+            '⡠', '⡡', '⡢', '⡣', '⡤', '⡥', '⡦', '⡧',
+            '⡨', '⡩', '⡪', '⡫', '⡬', '⡭', '⡮', '⡯',
+            '⡰', '⡱', '⡲', '⡳', '⡴', '⡵', '⡶', '⡷',
+            '⡸', '⡹', '⡺', '⡻', '⡼', '⡽', '⡾', '⡿',
+            '⢀', '⢁', '⢂', '⢃', '⢄', '⢅', '⢆', '⢇',
+            '⢈', '⢉', '⢊', '⢋', '⢌', '⢍', '⢎', '⢏',
+            '⢐', '⢑', '⢒', '⢓', '⢔', '⢕', '⢖', '⢗',
+            '⢘', '⢙', '⢚', '⢛', '⢜', '⢝', '⢞', '⢟',
+            '⢠', '⢡', '⢢', '⢣', '⢤', '⢥', '⢦', '⢧',
+            '⢨', '⢩', '⢪', '⢫', '⢬', '⢭', '⢮', '⢯',
+            '⢰', '⢱', '⢲', '⢳', '⢴', '⢵', '⢶', '⢷',
+            '⢸', '⢹', '⢺', '⢻', '⢼', '⢽', '⢾', '⢿',
+            '⣀', '⣁', '⣂', '⣃', '⣄', '⣅', '⣆', '⣇',
+            '⣈', '⣉', '⣊', '⣋', '⣌', '⣍', '⣎', '⣏',
+            '⣐', '⣑', '⣒', '⣓', '⣔', '⣕', '⣖', '⣗',
+            '⣘', '⣙', '⣚', '⣛', '⣜', '⣝', '⣞', '⣟',
+            '⣠', '⣡', '⣢', '⣣', '⣤', '⣥', '⣦', '⣧',
+            '⣨', '⣩', '⣪', '⣫', '⣬', '⣭', '⣮', '⣯',
+            '⣰', '⣱', '⣲', '⣳', '⣴', '⣵', '⣶', '⣷',
+            '⣸', '⣹', '⣺', '⣻', '⣼', '⣽', '⣾', '⣿',
+        ];
+
+        for hex in 0..0x100u16 {
+            let hex = hex as u8;
+            let c = braille[hex as usize];
+            let actual = translate_pixels_group(hex);
+            println!("0x{}, '{}' =? '{}'", hex, c, actual);
+            assert_eq!(c, actual,
+                       "'{}'!='{}' (0x{:x} != 0x{:x})",
+                       c, actual,
+                       c as u32, actual as u32);
+        }
+    }
 }
