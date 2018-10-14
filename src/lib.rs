@@ -106,10 +106,43 @@ impl <'px> Canvas<'px> {
     }
 
     /// Draw a line from `(x1, y1)` to `(x2, y2)` using the Bresenham algorithm.
-    pub fn draw_line(&mut self, x1: u32, y1: u32, x2: u32, y2: u32, color: u8)
+    pub fn draw_line(&mut self,
+                     x1: u32,
+                     y1: u32,
+                     x2: u32,
+                     y2: u32,
+                     color: u8)
         -> LolwutResult<()>
     {
-        Err(NotImplYet)
+        // TODO: Explain this madness.
+        let sx = if x1 < x2 { 1 } else { -1 };
+        let sy = if y1 < y2 { 1 } else { -1 };
+        let x2 = x2 as isize;
+        let y2 = y2 as isize;
+        let dx = (x2 - x1 as isize).abs();
+        let dy = (y2 - y1 as isize).abs();
+
+        let mut x = x1 as isize;
+        let mut y = y1 as isize;
+        let mut err = dx - dy;
+
+        loop {
+            println!("({}, {})", x, y);
+            self.draw_pixel(x as u32, y as u32, color)?;
+            if x == x2 && y == y2 { break; }
+
+            let e2 = 2 * err;
+            if e2 > -dy {
+                err -= dy;
+                x += sx;
+            }
+            if e2 < dx {
+                err += dx;
+                y += sy;
+            }
+        }
+
+        Ok(())
     }
 
     /// Draw a square centered at the specified `(x, y)` coordinates, with the
@@ -120,7 +153,7 @@ impl <'px> Canvas<'px> {
         Err(NotImplYet)
     }
 
-
+    /// Generate a `String` with each pixel represented in a grid.
     pub fn render(&self) -> LolwutResult<String> {
         let mut out = String::with_capacity(self.pixels.len());
         for y in 0..self.height {
@@ -138,16 +171,16 @@ impl <'px> Canvas<'px> {
     }
 }
 
-/// Translate a group of 8 pixels (2x4 rectangle) into the corresponding
-/// braille character. Each bit of `byte` should correspond to the pixels
-/// arranged as follows:
+/// Translate a group of 8 pixels (2x4 rectangle) into their corresponding
+/// braille character.
+///
+/// Each bit of `byte` should correspond to the pixels arranged as follows:
 /// ```norun
-///     0 3
-///     1 4
-///     2 5
-///     6 7
+/// [0] [3]
+/// [1] [4]
+/// [2] [5]
+/// [6] [7]
 /// ```
-/// Returns the corresponding braille character.
 pub fn translate_pixels_group(byte: u8) -> char {
     // Convert to unicode. This is in the U0800-UFFFF range,
     // so we need to emit it like this in three bytes:
