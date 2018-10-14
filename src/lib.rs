@@ -17,37 +17,14 @@ pub struct Canvas<'px> {
     height: u32,
 }
 
-/// A color is represented as either a dot, or the absence of a dot.
-#[derive(Debug, Copy, Clone)]
-pub enum Color {
-    Black = 0,
-    White = 1,
-}
-
-/// Helper struct to make less ambiguous functions taking a width and height.
-///
-/// Usage:
-/// ```rust
-/// # use lolwut::Dims;
-/// # fn foo_plain(_width: u32, _height: u32) {}
-/// # fn foo_dims(_dims: Dims) {}
-/// // Which number is height?
-/// foo_plain(65, 120);
-///
-/// // Unambiguous which dimension is height!
-/// foo_dims(Dims { width: 65, height: 120 });
-/// ```
-#[derive(Debug, Copy, Clone)]
-pub struct Dims {
-    pub width: u32,
-    pub height: u32,
-}
-
 #[derive(Debug, Copy, Clone)]
 pub enum CanvasError {
+    /// WIP.
     NotImplYet,
+    /// The provided buffer does not have enough bytes to be used in a canvas.
     PixelBufferTooSmall { needed: usize, actual: usize },
-    PixelOutOfBounds { x: u32, y: u32, dims: Dims },
+    /// Attempted to access a pixel at (x, y), which is out of bounds.
+    PixelOutOfBounds { x: u32, y: u32, width: u32, height: u32 },
 }
 use self::CanvasError::*;
 
@@ -55,12 +32,10 @@ pub type LolwutResult<T> = Result<T, CanvasError>;
 
 impl <'px> Canvas<'px> {
 
-    /// Create a Canvas ready to write pixels to. `buf` must be large enough
-    /// to hold `dims.width` and `dims.height` pixels.
-    pub fn create(dims: Dims, buf: &'px mut [u8]) -> LolwutResult<Canvas> {
-        let width = dims.width;
-        let height = dims.height;
-
+    /// Create a Canvas ready to write pixels to.
+    ///
+    /// `buf` must be large enough to hold `width` and `height` pixels.
+    pub fn create(width: u32, height: u32, buf: &'px mut [u8]) -> LolwutResult<Canvas> {
         // We cannot create a canvas if the buffer is too small.
         // We use a saturating mul to simplify the logic in the error case. This
         // way, an overflow (which is already going to cause problems) is checked
@@ -82,19 +57,16 @@ impl <'px> Canvas<'px> {
         })
     }
 
-    /// The dimensions of the canvas.
-    pub fn dims(&self) -> Dims {
-        Dims {
-            width:  self.width,
-            height: self.height,
-        }
-    }
-
     /// Construct an in index into the pixels buffer from an `(x, y)` coordinate.
     /// If the coordinate would be out of bounds, or if overflow occurs, returns
     /// `None`.
     fn index(&self, x: u32, y: u32) -> LolwutResult<usize> {
-        let maybe_err = PixelOutOfBounds { x, y, dims: self.dims() };
+        let maybe_err = PixelOutOfBounds {
+            x,
+            y,
+            width: self.width,
+            height: self.height
+        };
         let index = y.checked_mul(self.height).ok_or(maybe_err)?
                      .checked_add(x).ok_or(maybe_err)? as usize;
         if index < self.pixels.len() {
@@ -104,30 +76,24 @@ impl <'px> Canvas<'px> {
         }
     }
 
-    pub fn draw_pixel(&mut self, x: u32, y: u32, c: Color) -> LolwutResult<()> {
+    pub fn draw_pixel(&mut self, x: u32, y: u32, c: u8) -> LolwutResult<()> {
         let index = self.index(x, y)?;
         self.pixels[index] = c as u8;
         Ok(())
     }
 
-    pub fn get_pixel(&self, x: u32, y: u32) -> LolwutResult<Color> {
-        let byte = self.pixels[self.index(x, y)?];
-        match byte {
-            0 => Ok(Color::Black),
-            1 => Ok(Color::White),
-            // This is bad data!
-            _ => unreachable!(),
-        }
+    pub fn get_pixel(&self, x: u32, y: u32) -> LolwutResult<u8> {
+        Ok(self.pixels[self.index(x, y)?])
     }
 
     pub fn render(&self) -> LolwutResult<String> {
         let mut out = String::with_capacity(self.pixels.len());
         for x in 0..self.width {
             for y in 0..self.height {
-                let c = self.get_pixel(x, y)?;
-                let t = match c {
-                    Color::Black => '.',
-                    Color::White => '@',
+                let t = match self.get_pixel(x, y)? {
+                    0 => '.',
+                    1 => '@',
+                    _ => '?',
                 };
                 out.push(t);
             }
