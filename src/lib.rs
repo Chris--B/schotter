@@ -9,7 +9,10 @@
 
 #![allow(dead_code, unused_variables)]
 
-use std::char;
+use std::{
+    char,
+    f32::consts::PI,
+};
 
 /// This structure represents out canvas.
 pub struct Canvas<'px> {
@@ -150,7 +153,25 @@ impl <'px> Canvas<'px> {
     pub fn draw_square(&mut self, x: u32, y: u32, size: f32, angle: f32)
         -> LolwutResult<()>
     {
-        Err(NotImplYet)
+        let size = ((size as f64) / 1.4142135623).round() as f32;
+
+        // Construct the four corners of the square.
+        let mut points: [(u32, u32); 4] = Default::default();
+        let mut k = PI/4.0 + angle;
+        for j in 0..4 {
+            points[j].0 = (k.sin() * size + x as f32).round() as u32;
+            points[j].1 = (k.cos() * size + y as f32).round() as u32;
+            k += PI/2.0;
+        }
+
+        // Draw each of the four connecting lines
+        for j in 0..4 {
+            let p = points[j];
+            let q = points[(j + 1) % 4];
+            self.draw_line(p.0, p.1, q.0, q.1, 1)?;
+        }
+
+        Ok(())
     }
 
     /// Generate a `String` with each pixel represented in a grid.
