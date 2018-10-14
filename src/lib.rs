@@ -102,8 +102,8 @@ impl <'px> Canvas<'px> {
 
     pub fn render(&self) -> LolwutResult<String> {
         let mut out = String::with_capacity(self.pixels.len());
-        for x in 0..self.width {
-            for y in 0..self.height {
+        for y in 0..self.height {
+            for x in 0..self.width {
                 let t = match self.get_pixel(x, y)? {
                     0 => '.',
                     1 => '@',
