@@ -8,6 +8,7 @@
 //! This implementation is mostly a port, and it does re-use code/comments.
 
 #![allow(dead_code, unused_variables)]
+
 use std::char;
 
 /// This structure represents out canvas.
@@ -60,7 +61,7 @@ impl <'px> Canvas<'px> {
     /// Construct an in index into the pixels buffer from an `(x, y)` coordinate.
     /// If the coordinate would be out of bounds, or if overflow occurs, returns
     /// `None`.
-    pub fn index(&self, x: u32, y: u32) -> LolwutResult<usize> {
+    fn index(&self, x: u32, y: u32) -> LolwutResult<usize> {
         // All of our error checking is Option-based. However, what we want is
         // Result-based.
         // Furthermore, every error generates the same Error: PixelOutOfBounds.
@@ -75,30 +76,50 @@ impl <'px> Canvas<'px> {
 
             if x < width && y < height {
                 let index = x.checked_add(y.checked_mul(width)?)?;
-                Some(index)
-            } else {
-                None
+                if index < self.pixels.len() {
+                    return Some(index);
+                }
             }
+
+            None
         }() {
-            Some(index) => Ok(index),
-            None        => Err(PixelOutOfBounds {
+            Some(index) =>  Ok(index),
+            None        =>  Err(PixelOutOfBounds {
                                 x,
                                 y,
                                 width: self.width,
                                 height: self.height
-                           }),
+                            }),
         }
     }
 
-    pub fn draw_pixel(&mut self, x: u32, y: u32, c: u8) -> LolwutResult<()> {
-        let index = self.index(x, y)?;
-        self.pixels[index] = c as u8;
-        Ok(())
-    }
-
+    /// Get the pixel at `(x, y)`.
     pub fn get_pixel(&self, x: u32, y: u32) -> LolwutResult<u8> {
         Ok(self.pixels[self.index(x, y)?])
     }
+
+    /// Draw a single pixel at `(x, y)`.
+    pub fn draw_pixel(&mut self, x: u32, y: u32, color: u8) -> LolwutResult<()> {
+        let index = self.index(x, y)?;
+        self.pixels[index] = color;
+        Ok(())
+    }
+
+    /// Draw a line from `(x1, y1)` to `(x2, y2)` using the Bresenham algorithm.
+    pub fn draw_line(&mut self, x1: u32, y1: u32, x2: u32, y2: u32, color: u8)
+        -> LolwutResult<()>
+    {
+        Err(NotImplYet)
+    }
+
+    /// Draw a square centered at the specified `(x, y)` coordinates, with the
+    /// specified rotation angle and size.
+    pub fn draw_square(&mut self, x: u32, y: u32, size: f32, angle: f32)
+        -> LolwutResult<()>
+    {
+        Err(NotImplYet)
+    }
+
 
     pub fn render(&self) -> LolwutResult<String> {
         let mut out = String::with_capacity(self.pixels.len());
