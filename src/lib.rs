@@ -10,15 +10,18 @@
 #![allow(dead_code, unused_variables)]
 
 use std::{
+    ptr,
     str,
     f32::consts::PI,
 };
 
+use rand::prelude::*;
+
 /// This structure represents out canvas.
 pub struct Canvas<'px> {
     pixels: &'px mut [u8],
-    width:  u32,
-    height: u32,
+    width:  i32,
+    height: i32,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -27,27 +30,35 @@ pub enum CanvasError {
     NotImplYet,
     /// The provided buffer does not have enough bytes to be used in a canvas.
     PixelBufferTooSmall { needed: usize, actual: usize },
-    /// Attempted to access a pixel at (x, y), which is out of bounds.
-    PixelOutOfBounds { x: u32, y: u32, width: u32, height: u32 },
+    /// The canvas needs to have certain dimensions,
+    /// but one or more are too small.
+    CanvasTooSmall {
+        needed_width: i32, needed_height: i32,
+        actual_width: i32, actual_height: i32,
+    }
 }
 use self::CanvasError::*;
 
-pub type LolwutResult<T> = Result<T, CanvasError>;
-
 impl <'px> Canvas<'px> {
+
+    /// Computes the required buffer size to successfully create a canvas of the
+    /// given size.
+    pub fn buffer_size_needed(width: i32, height: i32) -> usize {
+        if width <= 0 || height <= 0 {
+            0
+        } else {
+            (width as usize).saturating_mul(height as usize)
+        }
+    }
 
     /// Create a Canvas ready to write pixels to.
     ///
     /// `buf` must be large enough to hold `width` and `height` pixels.
-    pub fn create(width: u32, height: u32, buf: &'px mut [u8]) -> LolwutResult<Canvas> {
-        // We cannot create a canvas if the buffer is too small.
-        // We use a saturating mul to simplify the logic in the error case. This
-        // way, an overflow (which is already going to cause problems) is checked
-        // as an error so long as `buf.len()` < `usize::MAX`.
-        // In practice, I don't know of any platforms that allow you to allocate
-        // a buffer of length `usize::MAX`, so we don't need to handle this case.
-        let px_count = (width as usize).saturating_mul(height as usize);
-        if px_count > buf.len() {
+    pub fn create(width: i32, height: i32, buf: &'px mut [u8])
+        -> Result<Canvas, CanvasError>
+    {
+        let px_count = Canvas::buffer_size_needed(width, height);
+        if px_count == 0 || px_count > buf.len() {
             return Err(PixelBufferTooSmall {
                 needed: px_count,
                 actual: buf.len()
@@ -61,65 +72,57 @@ impl <'px> Canvas<'px> {
         })
     }
 
-    /// Construct an in index into the pixels buffer from an `(x, y)` coordinate.
-    /// If the coordinate would be out of bounds, or if overflow occurs, returns
+    pub fn clear(&mut self) {
+        unsafe {
+            ptr::write_bytes(&mut self.pixels[0], 0, self.pixels.len());
+        }
+    }
+
+    pub fn fill(&mut self) {
+        unsafe {
+            ptr::write_bytes(&mut self.pixels[0], 1, self.pixels.len());
+        }
+    }
+
+    /// Construct an index into the pixels buffer from an `(x, y)` coordinate.
+    /// If the coordinate would be out of bounds, or if overflow occurs, return
     /// `None`.
-    fn index(&self, x: u32, y: u32) -> LolwutResult<usize> {
-        // All of our error checking is Option-based. However, what we want is
-        // Result-based.
-        // Furthermore, every error generates the same Error: PixelOutOfBounds.
-        // This lambda lets us use `?` on checked arithmetic, while still
-        // keeping the syntax concise.
-        // Even in debug builds, this lambda is inlined.
-        match || -> Option<usize> {
+    fn index(&self, x: i32, y: i32) -> Option<usize> {
+        if 0 <= x && x < self.width as i32 &&
+           0 <= y && y < self.height as i32
+        {
             let x = x as usize;
             let y = y as usize;
             let width = self.width as usize;
             let height = self.height as usize;
 
-            if x < width && y < height {
-                let index = x.checked_add(y.checked_mul(width)?)?;
-                if index < self.pixels.len() {
-                    return Some(index);
-                }
+            // Because we're in bounds, we cannot overflow.
+            let index = x + y * width;
+            if index < self.pixels.len() {
+                return Some(index);
             }
-
-            None
-        }() {
-            Some(index) =>  Ok(index),
-            None        =>  Err(PixelOutOfBounds {
-                                x,
-                                y,
-                                width: self.width,
-                                height: self.height
-                            }),
         }
+        None
     }
 
-    /// Get the pixel at `(x, y)`. Out of bounds pixels are read as empty.
-    pub fn get_pixel(&self, x: u32, y: u32) -> u8 {
+    /// Get the pixel at `(x, y)`. Out of bounds pixels are read as empty (0).
+    pub fn get_pixel(&self, x: i32, y: i32) -> u8 {
         match self.index(x, y) {
-            Ok(index) => self.pixels[index],
-            Err(_)    => 0,
+            Some(index) => self.pixels[index],
+            None        => 0,
         }
     }
 
-    /// Draw a single pixel at `(x, y)`.
-    pub fn draw_pixel(&mut self, x: u32, y: u32, color: u8) -> LolwutResult<()> {
-        let index = self.index(x, y)?;
-        self.pixels[index] = color;
-        Ok(())
+    /// Draw a single pixel at `(x, y)`. Out of bounds writes are ignored.
+    pub fn draw_pixel(&mut self, x: i32, y: i32, color: u8) {
+        match self.index(x, y) {
+            Some(index) => self.pixels[index] = color,
+            None        => {},
+        }
     }
 
     /// Draw a line from `(x1, y1)` to `(x2, y2)` using the Bresenham algorithm.
-    pub fn draw_line(&mut self,
-                     x1: u32,
-                     y1: u32,
-                     x2: u32,
-                     y2: u32,
-                     color: u8)
-        -> LolwutResult<()>
-    {
+    pub fn draw_line(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, color: u8) {
         // TODO: Explain this madness.
         let sx = if x1 < x2 { 1 } else { -1 };
         let sy = if y1 < y2 { 1 } else { -1 };
@@ -133,8 +136,7 @@ impl <'px> Canvas<'px> {
         let mut err = dx - dy;
 
         loop {
-            println!("({}, {})", x, y);
-            self.draw_pixel(x as u32, y as u32, color)?;
+            self.draw_pixel(x as i32, y as i32, color);
             if x == x2 && y == y2 { break; }
 
             let e2 = 2 * err;
@@ -147,23 +149,19 @@ impl <'px> Canvas<'px> {
                 y += sy;
             }
         }
-
-        Ok(())
     }
 
     /// Draw a square centered at the specified `(x, y)` coordinates, with the
-    /// specified rotation angle and size.
-    pub fn draw_square(&mut self, x: u32, y: u32, size: f32, angle: f32)
-        -> LolwutResult<()>
-    {
+    /// specified rotation angle (radians) and size.
+    pub fn draw_square(&mut self, x: i32, y: i32, size: f32, angle: f32) {
         let size = ((size as f64) / 1.4142135623).round() as f32;
 
         // Construct the four corners of the square.
-        let mut points: [(u32, u32); 4] = Default::default();
+        let mut points: [(i32, i32); 4] = Default::default();
         let mut k = PI/4.0 + angle;
         for j in 0..4 {
-            points[j].0 = (k.sin() * size + x as f32).round() as u32;
-            points[j].1 = (k.cos() * size + y as f32).round() as u32;
+            points[j].0 = (k.sin() * size + x as f32).round() as i32;
+            points[j].1 = (k.cos() * size + y as f32).round() as i32;
             k += PI/2.0;
         }
 
@@ -171,19 +169,71 @@ impl <'px> Canvas<'px> {
         for j in 0..4 {
             let p = points[j];
             let q = points[(j + 1) % 4];
-            self.draw_line(p.0, p.1, q.0, q.1, 1)?;
+            self.draw_line(p.0, p.1, q.0, q.1, 1);
+        }
+    }
+
+    pub fn draw_schotter(&mut self,
+                         console_cols:    i32,
+                         squares_per_row: i32,
+                         squares_per_col: i32)
+        -> Result<(), CanvasError>
+    {
+        let needed_width:  i32 = 2 * console_cols;
+        let padding:       f32 = if needed_width > 4 { 2.0 } else { 0.0 };
+        let square_side:   f32 = (needed_width as f32 - 2.0 * padding)
+                                   / squares_per_row as f32;
+        let needed_height: i32 = (square_side * squares_per_col as f32
+                                   + 2.0 * padding).round() as i32;
+
+        if needed_width  > self.width as i32  ||
+           needed_height > self.height as i32
+        {
+            return Err(CanvasTooSmall {
+                needed_width,
+                needed_height,
+                actual_width: self.width,
+                actual_height: self.height,
+            });
+        }
+
+        for y in 0..squares_per_col {
+            // This scaling factor is chosen per row.
+            let factor = (y + 1) as f32 / (squares_per_col + 1) as f32;
+            for x in 0..squares_per_row {
+                let mut sx = (x as f32 * square_side +
+                              square_side/2.0 + padding).round() as i32;
+                let mut sy = (y as f32 * square_side +
+                              square_side/2.0 + padding).round() as i32;
+
+                let mut r1: f32 = random::<f32>() * factor;
+                if random() { r1 = -r1; }
+
+                let mut r2: f32 = random::<f32>() * factor;
+                if random() { r2 = -r2; }
+
+                let mut r3: f32 = random::<f32>() * factor;
+                if random() { r3 = -r3; }
+
+                let angle = r1;
+                sx += (r2 * square_side / 3.0).round() as i32;
+                sy += (r3 * square_side / 3.0).round() as i32;
+                self.draw_square(sx as i32, sy as i32, square_side, angle);
+            }
         }
 
         Ok(())
     }
 
     /// Generate a `String` with each pixel represented in a grid.
-    pub fn render(&self) -> LolwutResult<String> {
+    pub fn render(&self) -> Result<String, CanvasError> {
         let mut out = String::with_capacity(self.pixels.len());
         // Iterate over the range in 2x4 vertical blocks.
         // TODO: Check edge case when height % 4 != 0, and width % 2 != 0.
         for y in (0..self.height).step_by(4) {
             for x in (0..self.width).step_by(2) {
+                let x = x as i32;
+                let y = y as i32;
                 let mut byte: u8 = 0;
                 if self.get_pixel(x,   y)   != 0 { byte |= 1 << 0; }
                 if self.get_pixel(x,   y+1) != 0 { byte |= 1 << 1; }
@@ -214,6 +264,12 @@ impl <'px> Canvas<'px> {
 pub fn translate_pixels_group(byte: u8) -> char {
     // See: https://en.wikipedia.org/wiki/Braille_Patterns
 
+    // Braille has a standard 6-dot cell for conveying symbols, which was later
+    // expanded into the 8-cell. Each of the 8 cells (as labeled above) can be
+    // either raised or not, hence the obvious mapping to a byte.
+    // Note that some fonts may render these with hollow dots in place of space,
+    // and that will change the appearance of the script.
+
     // Convert to unicode. This is in the U0800-UFFFF range,
     // so we need to emit it like this in three bytes:
     //      1110_xxxx 10xx_xxxx 10xx_xxxx
@@ -235,7 +291,8 @@ mod t {
     #[test]
     fn check_translate_pixels_group() {
         let braille = [
-            '\u{2800}', // Super special secret blank "character"
+            '\u{2800}', // BRAILLE PATTERN BLANK
+            // 6-dot patterns
                  '⠁', '⠂', '⠃', '⠄', '⠅', '⠆', '⠇',
             '⠈', '⠉', '⠊', '⠋', '⠌', '⠍', '⠎', '⠏',
             '⠐', '⠑', '⠒', '⠓', '⠔', '⠕', '⠖', '⠗',
@@ -244,6 +301,7 @@ mod t {
             '⠨', '⠩', '⠪', '⠫', '⠬', '⠭', '⠮', '⠯',
             '⠰', '⠱', '⠲', '⠳', '⠴', '⠵', '⠶', '⠷',
             '⠸', '⠹', '⠺', '⠻', '⠼', '⠽', '⠾', '⠿',
+            // 8-dot patterns
             '⡀', '⡁', '⡂', '⡃', '⡄', '⡅', '⡆', '⡇',
             '⡈', '⡉', '⡊', '⡋', '⡌', '⡍', '⡎', '⡏',
             '⡐', '⡑', '⡒', '⡓', '⡔', '⡕', '⡖', '⡗',
@@ -270,7 +328,7 @@ mod t {
             '⣸', '⣹', '⣺', '⣻', '⣼', '⣽', '⣾', '⣿',
         ];
 
-        for hex in 0..0x100u16 {
+        for hex in 0..0x100i32 {
             let hex = hex as u8;
             let c = braille[hex as usize];
             let actual = translate_pixels_group(hex);
@@ -278,7 +336,7 @@ mod t {
             assert_eq!(c, actual,
                        "'{}'!='{}' (0x{:x} != 0x{:x})",
                        c, actual,
-                       c as u32, actual as u32);
+                       c as i32, actual as i32);
         }
     }
 }
