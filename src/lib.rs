@@ -10,6 +10,8 @@
 #![allow(dead_code, unused_variables)]
 
 use std::{
+    error,
+    fmt,
     ptr,
     str,
     f32::consts::PI,
@@ -17,21 +19,25 @@ use std::{
 
 use rand::prelude::*;
 
-/// This structure represents out canvas.
+/// The Canvas represents the area that's drawn in. Each pixel is either:
+///     1 - and "on"
+///     0 - and "off"
+/// Other values will silently turn into 1.
 pub struct Canvas<'px> {
     pixels: &'px mut [u8],
     width:  i32,
     height: i32,
 }
 
+/// An error related to the Canvas creation.
 #[derive(Debug, Copy, Clone)]
 pub enum CanvasError {
-    /// WIP.
-    NotImplYet,
-    /// The provided buffer does not have enough bytes to be used in a canvas.
+    /// The provided buffer does not have enough bytes to be used as the
+    /// backing memory for a canvas.
     PixelBufferTooSmall { needed: usize, actual: usize },
+
     /// The canvas needs to have certain dimensions,
-    /// but one or more are too small.
+    /// but the dimensions provided are too small.
     CanvasTooSmall {
         needed_width: i32, needed_height: i32,
         actual_width: i32, actual_height: i32,
@@ -39,22 +45,49 @@ pub enum CanvasError {
 }
 use self::CanvasError::*;
 
+impl fmt::Display for CanvasError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            PixelBufferTooSmall {
+                needed,
+                actual,
+            } => {
+                f.debug_struct("CanvasError::PixelBufferTooSmall")
+                 .field("needed", &needed)
+                 .field("actual", &actual)
+                 .finish()
+            },
+            CanvasTooSmall {
+                needed_width, needed_height,
+                actual_width, actual_height,
+            } => {
+                f.debug_struct("CanvasError::CanvasTooSmall")
+                 .field("needed_width",  &needed_width)
+                 .field("needed_height", &needed_height)
+                 .field("actual_width",  &actual_width)
+                 .field("actual_height", &actual_height)
+                 .finish()
+            }
+        }
+    }
+}
+
+impl error::Error for CanvasError {}
+
+
 impl <'px> Canvas<'px> {
 
     /// Computes the required buffer size to successfully create a canvas of the
     /// given size.
-    pub fn buffer_size_needed(width: i32, height: i32) -> usize {
-        if width <= 0 || height <= 0 {
-            0
-        } else {
-            (width as usize).saturating_mul(height as usize)
-        }
+    pub fn buffer_size_needed(width: u32, height: u32) -> usize {
+        (width as usize).saturating_mul(height as usize)
     }
 
-    /// Create a Canvas ready to write pixels to.
+    /// Create a Canvas of the specified size.
     ///
-    /// `buf` must be large enough to hold `width` and `height` pixels.
-    pub fn create(width: i32, height: i32, buf: &'px mut [u8])
+    /// `buf` must be large enough to hold `width` and `height` pixels. See
+    /// `Canvas::buffer_size_needed` to make sure your slice is large enough.
+    pub fn create(width: u32, height: u32, buf: &'px mut [u8])
         -> Result<Canvas, CanvasError>
     {
         let px_count = Canvas::buffer_size_needed(width, height);
@@ -67,10 +100,18 @@ impl <'px> Canvas<'px> {
 
         Ok(Canvas {
             pixels: buf,
-            width,
-            height,
+            width:  width as i32,
+            height: height as i32,
         })
     }
+
+    // We want `clear()` and `fill()` to be dumb `memcpy()`s. Rust doesn't expose
+    // a safe wrapper around memcpy yet, so we write the bytes directly.
+    // This is unsafe in the general case - writing an arbitrary byte to
+    // arbitrary types can go horribly wrong.
+    // We are writing 0 and 1 into a fixed size buffer with known bounds.
+    // This is pretty hard to get wrong, so we go ahead and use the `unsafe`
+    // method.
 
     pub fn clear(&mut self) {
         unsafe {
@@ -85,8 +126,8 @@ impl <'px> Canvas<'px> {
     }
 
     /// Construct an index into the pixels buffer from an `(x, y)` coordinate.
-    /// If the coordinate would be out of bounds, or if overflow occurs, return
-    /// `None`.
+    /// If the coordinate would be out of bounds, or if overflow occurs,
+    /// return `None`.
     fn index(&self, x: i32, y: i32) -> Option<usize> {
         if 0 <= x && x < self.width as i32 &&
            0 <= y && y < self.height as i32
@@ -123,7 +164,8 @@ impl <'px> Canvas<'px> {
 
     /// Draw a line from `(x1, y1)` to `(x2, y2)` using the Bresenham algorithm.
     pub fn draw_line(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, color: u8) {
-        // TODO: Explain this madness.
+        // TODO: Explain how this works.
+        //      https://en.wikipedia.org/wiki/Bresenham%27s_line_algorithm
         let sx = if x1 < x2 { 1 } else { -1 };
         let sy = if y1 < y2 { 1 } else { -1 };
         let x2 = x2 as isize;
@@ -152,12 +194,23 @@ impl <'px> Canvas<'px> {
     }
 
     /// Draw a square centered at the specified `(x, y)` coordinates, with the
-    /// specified rotation angle (radians) and size.
+    /// specified rotation angle and size.
     pub fn draw_square(&mut self, x: i32, y: i32, size: f32, angle: f32) {
+        // `size`, as passed into this function, represents the scaling of a
+        // unit square.
+        // We will operate on four equally spaced points on a unit circle that
+        // represent our square's corners.
+        // We must adjust this `size` by the ratio between our square's diagonal
+        // and the radius of the circle that encloses it to get the correct
+        // scaling in the final square.
+        // The square has unit side lengths, and thus has a diagonal of sqrt(2).
         let size = ((size as f64) / 1.4142135623).round() as f32;
 
-        // Construct the four corners of the square.
+        // We construct the four corners of the square by using our parametric
+        // equations for the circle at four equally-spaced `k` values.
         let mut points: [(i32, i32); 4] = Default::default();
+        // The first point of a non-rotated square is at t=PI/4. When we rotate
+        // the square, we just offset this initial radian value.
         let mut k = PI/4.0 + angle;
         for j in 0..4 {
             points[j].0 = (k.sin() * size + x as f32).round() as i32;
@@ -165,7 +218,8 @@ impl <'px> Canvas<'px> {
             k += PI/2.0;
         }
 
-        // Draw each of the four connecting lines
+        // Each of the four points needs to be connected. We connect them in
+        // counter-clockwise order
         for j in 0..4 {
             let p = points[j];
             let q = points[(j + 1) % 4];
@@ -173,6 +227,10 @@ impl <'px> Canvas<'px> {
         }
     }
 
+    /// Draw Georg Ness's "Schotter"
+    ///
+    /// "Schotter" is a tiled arrangement of squares that grow increasingly
+    /// chaotic as you advance down the image.
     pub fn draw_schotter(&mut self,
                          console_cols:    i32,
                          squares_per_row: i32,
@@ -198,7 +256,8 @@ impl <'px> Canvas<'px> {
         }
 
         for y in 0..squares_per_col {
-            // This scaling factor is chosen per row.
+            // This scaling factor is chosen per row, and increases as you go
+            // down the rows. (Row number increases downward).
             let factor = (y + 1) as f32 / (squares_per_col + 1) as f32;
             for x in 0..squares_per_row {
                 let mut sx = (x as f32 * square_side +
@@ -225,8 +284,14 @@ impl <'px> Canvas<'px> {
         Ok(())
     }
 
-    /// Generate a `String` with each pixel represented in a grid.
-    pub fn render(&self) -> Result<String, CanvasError> {
+    /// Render the canvas into a multi-line string. Pixels are either "on" or
+    /// "off".
+    ///
+    /// This string is designed to be seen by humans, and should not be used
+    /// in lieu of iterating over the pixels with `Canvas::get_pixel`.
+    /// On  pixels are rendered as a dot, or other dark, solid marking.
+    /// Off pixels are rendered as empty space or white space.
+    pub fn render(&self) -> String {
         let mut out = String::with_capacity(self.pixels.len());
         // Iterate over the range in 2x4 vertical blocks.
         // TODO: Check edge case when height % 4 != 0, and width % 2 != 0.
@@ -234,6 +299,9 @@ impl <'px> Canvas<'px> {
             for x in (0..self.width).step_by(2) {
                 let x = x as i32;
                 let y = y as i32;
+                // Each bit in the byte corresponds to a different pixel in the
+                // tile. The ordering here is specially chosen so that this
+                // maps cleanly to the Braille character set.
                 let mut byte: u8 = 0;
                 if self.get_pixel(x,   y)   != 0 { byte |= 1 << 0; }
                 if self.get_pixel(x,   y+1) != 0 { byte |= 1 << 1; }
@@ -247,7 +315,7 @@ impl <'px> Canvas<'px> {
             }
             out.push('\n');
         }
-        Ok(out)
+        out
     }
 }
 
@@ -328,6 +396,7 @@ mod t {
             '⣸', '⣹', '⣺', '⣻', '⣼', '⣽', '⣾', '⣿',
         ];
 
+        // Exhaustively test every possible u8 value.
         for hex in 0..0x100i32 {
             let hex = hex as u8;
             let c = braille[hex as usize];

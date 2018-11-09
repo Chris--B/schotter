@@ -1,9 +1,21 @@
-
-# schotter
+### schotter
 
 Inspired by [`<antirez>`](http://antirez.com/news/123).
 Code transcribed from
 [github](https://github.com/antirez/redis/blob/91685eeeb/src/lolwut5.c).
+
+For best effects, view the following art with a font that supports
+mono-width braille characters.
+
+I find [Everson Mono](http://www.evertype.com/emono) visualizes the
+characters well. It uses hallow dots instead of empty space, so it helps
+if you're curious about how braille characters are used.
+Although, it's not good if you want to see the larger image.
+
+Many browsers do not use a correctly-width font for this text, so the below art
+may be warped. `cmd.exe` on Windows completely fails, but `cmder` works very well.
+You may need to `cat` this file in your terminal for it to present correctly.
+
 
 ```
 ⠀⡤⠤⠤⠤⠤⠤⠤⠤⡤⠤⠤⠤⠤⠤⠤⠤⡤⠤⠤⠤⠤⠤⠤⠤⣤⠤⠤⠤⢄⣀⣀⣀⣀⣀⣀⣀⠤⠤⠤⢤⢠⠤⠤⠤⢄⣀⣀⣀⣠⠤⠤⠤⢄⣀⣀⣀⣀⣀⣀⣀⠤⠤⠤⢤⠀
