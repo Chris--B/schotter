@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<error::Error>> {
     canvas.draw_schotter(66, 8, 12)?;
     let text = canvas.render();
     print!("{}", text);
-    println!("Georg Nees - schotter, plotter on paper, 1968. Redis ver.");
+    println!("Georg Nees - schotter, plotter on paper, 1968.");
 
     Ok(())
 }
