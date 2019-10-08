@@ -7,8 +7,6 @@
 //!
 //! This implementation is mostly a port, and it does re-use code/comments.
 
-#![allow(dead_code, unused_variables)]
-
 use std::{
     error,
     fmt,
@@ -23,8 +21,8 @@ use rand::prelude::*;
 ///     1 - and "on"
 ///     0 - and "off"
 /// Other values will silently turn into 1.
-pub struct Canvas<'px> {
-    pixels: &'px mut [u8],
+pub struct Canvas {
+    pixels: Vec<u8>,
     width:  i32,
     height: i32,
 }
@@ -34,91 +32,81 @@ pub struct Canvas<'px> {
 pub enum CanvasError {
     /// The provided buffer does not have enough bytes to be used as the
     /// backing memory for a canvas.
-    PixelBufferTooSmall { needed: usize, actual: usize },
+    PixelBufferTooSmall {
+        needed: usize,
+        actual: usize
+    },
 
     /// The canvas needs to have certain dimensions,
     /// but the dimensions provided are too small.
     CanvasTooSmall {
-        needed_width: i32, needed_height: i32,
-        actual_width: i32, actual_height: i32,
+        needed_width: i32,
+        actual_width: i32,
+        needed_height: i32,
+        actual_height: i32,
     }
 }
 use self::CanvasError::*;
 
 impl fmt::Display for CanvasError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            PixelBufferTooSmall {
-                needed,
-                actual,
-            } => {
-                f.debug_struct("CanvasError::PixelBufferTooSmall")
-                 .field("needed", &needed)
-                 .field("actual", &actual)
-                 .finish()
-            },
-            CanvasTooSmall {
-                needed_width, needed_height,
-                actual_width, actual_height,
-            } => {
-                f.debug_struct("CanvasError::CanvasTooSmall")
-                 .field("needed_width",  &needed_width)
-                 .field("needed_height", &needed_height)
-                 .field("actual_width",  &actual_width)
-                 .field("actual_height", &actual_height)
-                 .finish()
-            }
-        }
+        write!(f, "{:?}", self)
     }
 }
 
 impl error::Error for CanvasError {}
 
+impl Canvas {
 
-impl <'px> Canvas<'px> {
-
-    /// Computes the required buffer size to successfully create a canvas of the
-    /// given size.
-    pub fn buffer_size_needed(width: u32, height: u32) -> usize {
-        (width as usize).saturating_mul(height as usize)
-    }
-
-    /// Create a Canvas of the specified size.
-    ///
-    /// `buf` must be large enough to hold `width` and `height` pixels. See
-    /// `Canvas::buffer_size_needed` to make sure your slice is large enough.
-    pub fn create(width: u32, height: u32, buf: &'px mut [u8])
+    /// Create a Canvas of the specified size
+    pub fn create(width: u32, height: u32)
         -> Result<Canvas, CanvasError>
     {
-        let px_count = Canvas::buffer_size_needed(width, height);
-        if px_count == 0 || px_count > buf.len() {
-            return Err(PixelBufferTooSmall {
-                needed: px_count,
-                actual: buf.len()
-            });
-        }
+        let px_count = width * height;
 
         Ok(Canvas {
-            pixels: buf,
+            pixels: vec![0; px_count as usize],
             width:  width as i32,
             height: height as i32,
         })
     }
 
+    /// Create a Canvas large enough and render Schotter onto it
+    pub fn create_and_render_schotter(
+        console_cols: i32,
+        squares_per_row: i32,
+        squares_per_col: i32
+    ) -> Result<Canvas, CanvasError>
+    {
+        let needed_width:  i32 = 2 * console_cols;
+        let padding:       f32 = if needed_width > 4 { 2.0 } else { 0.0 };
+        let square_side:   f32 = (needed_width as f32 - 2.0 * padding)
+                                   / squares_per_row as f32;
+        let needed_height: i32 = (square_side * squares_per_col as f32
+                                   + 2.0 * padding).round() as i32;
+
+        let mut canvas = Canvas::create(needed_width as u32, needed_height as u32)?;
+        canvas.draw_schotter(console_cols, squares_per_row, squares_per_col)?;
+
+        Ok(canvas)
+    }
+
+
     // We want `clear()` and `fill()` to be dumb `memcpy()`s. Rust doesn't expose
     // a safe wrapper around memcpy yet, so we write the bytes directly.
     // This is unsafe in the general case - writing an arbitrary byte to
     // arbitrary types can go horribly wrong.
-    // We are writing 0 and 1 into a fixed size buffer with known bounds.
-    // This is pretty hard to get wrong, so we go ahead and use the `unsafe`
-    // method.
+    // We are writing 0 and 1 into a fixed size buffer with known bounds, so
+    // this is safe.
 
+    /// Set all pixel values to clear
     pub fn clear(&mut self) {
         unsafe {
             ptr::write_bytes(&mut self.pixels[0], 0, self.pixels.len());
         }
     }
 
+    /// Set all pixel values to set
     pub fn fill(&mut self) {
         unsafe {
             ptr::write_bytes(&mut self.pixels[0], 1, self.pixels.len());
