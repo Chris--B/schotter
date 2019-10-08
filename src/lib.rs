@@ -91,7 +91,6 @@ impl Canvas {
         Ok(canvas)
     }
 
-
     // We want `clear()` and `fill()` to be dumb `memcpy()`s. Rust doesn't expose
     // a safe wrapper around memcpy yet, so we write the bytes directly.
     // This is unsafe in the general case - writing an arbitrary byte to
@@ -123,7 +122,7 @@ impl Canvas {
             let x = x as usize;
             let y = y as usize;
             let width = self.width as usize;
-            let height = self.height as usize;
+            let _height = self.height as usize;
 
             // Because we're in bounds, we cannot overflow.
             let index = x + y * width;
